@@ -19,7 +19,6 @@ def conectar_google_sheets():
             "https://www.googleapis.com/auth/drive"
         ]
         
-        # Suporta tanto o formato TOML nativo quanto o formato JSON envelopado
         creds_data = st.secrets["gcp_service_account"]
         if isinstance(creds_data, str):
             creds_dict = json.loads(creds_data)
@@ -30,7 +29,7 @@ def conectar_google_sheets():
         client = gspread.authorize(creds)
         return client
     except Exception as e:
-        st.error(f"Erro ao conectar com o Google Sheets. Verifique as credenciais no Secrets: {e}")
+        st.error(f"Erro ao conectar com o Google Sheets: {e}")
         return None
 
 # Menu lateral para inserir a URL ou ID da planilha
@@ -79,7 +78,9 @@ def carregar_dados():
         if df_p.empty:
             return pd.DataFrame(), sh
 
-        # Normaliza nomes de colunas e dados
+        # Normaliza nomes de colunas (remove espaços extras nos nomes das colunas)
+        df_p.columns = [str(col).strip() for col in df_p.columns]
+
         df_p['Ala'] = df_p['Ala'].astype(str).str.strip()
         df_p['Ala'] = df_p['Ala'].apply(lambda x: "Ala A (Muro)" if x.upper() in ["ALA A", "ALA A (MURO)", "A"] else x)
         df_p['Chassi'] = df_p['Chassi'].apply(formatar_chassi)
@@ -168,12 +169,20 @@ if 'encontrados_busca' in st.session_state and not st.session_state['encontrados
                     ws_retirados.append_row(["Chassi", "Modelo", "Cor", "Ala", "Posicao", "Data_Hora_Retirada"])
 
                 hora_atual = datetime.now().strftime("%d/%m/%Y %H:%M")
-                celulas_patio = ws_patio.get_all_records()
+                
+                # Busca localização das células na aba 'Patio'
+                headers = [str(h).strip() for h in ws_patio.row_values(1)]
+                col_chassi_idx = headers.index("Chassi") + 1 if "Chassi" in headers else 3
+                
+                # Pega todas as células da coluna Chassi
+                col_valores = ws_patio.col_values(col_chassi_idx)
                 
                 for _, r in encontrados.iterrows():
-                    # 1. Registra a saída na aba Retirados
+                    chassi_alvo = str(r['Chassi']).strip()
+                    
+                    # 1. Registra a saída na aba 'Retirados'
                     ws_retirados.append_row([
-                        str(r['Chassi']), 
+                        chassi_alvo, 
                         str(r['Modelo']), 
                         str(r['Cor']), 
                         str(r['Ala']), 
@@ -181,14 +190,15 @@ if 'encontrados_busca' in st.session_state and not st.session_state['encontrados
                         hora_atual
                     ])
                     
-                    # 2. Limpa o Chassi na aba Patio (libera a vaga)
-                    for i, linha in enumerate(celulas_patio, start=2): # start=2 para desconsiderar cabeçalho
-                        if str(linha.get('Chassi')).strip() == str(r['Chassi']).strip():
-                            col_chassi = list(linha.keys()).index('Chassi') + 1
-                            ws_patio.update_cell(i, col_chassi, "")
+                    # 2. Apaga o chassi da aba 'Patio' na linha correspondente
+                    for num_linha, val in enumerate(col_valores, start=1):
+                        if str(val).strip() == chassi_alvo:
+                            ws_patio.update_cell(num_linha, col_chassi_idx, "")
+                            break
                             
                 st.success("Planilha atualizada com sucesso!")
                 del st.session_state['encontrados_busca']
+                st.cache_resource.clear()  # Limpa o cache para forçar a reler a planilha atualizada
                 st.rerun()
             except Exception as e:
                 st.error(f"Erro ao salvar na planilha: {e}")
