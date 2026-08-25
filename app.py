@@ -33,29 +33,44 @@ if not sheet_id:
 # URL de exportação CSV para leitura direta da aba 'Patio'
 url_patio_csv = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet=Patio"
 
+# Função auxiliar para padronizar qualquer chassi para 6 dígitos numéricos
+def formatar_chassi(val):
+    val_str = str(val).strip()
+    if not val_str or val_str.lower() in ['nan', 'none', '[ vazio ]']:
+        return '[ VAZIO ]'
+    # Se contiver apenas dígitos numéricos, completa com zeros à esquerda até dar 6 dígitos
+    if val_str.isdigit() and len(val_str) < 6:
+        return val_str.zfill(6)
+    return val_str
+
 # 2. Carregamento dos dados da planilha
 @st.cache_data(ttl=3) # Atualiza a cada 3 segundos
 def carregar_dados():
     try:
-        df_p = pd.read_csv(url_patio_csv)
-        # Limpeza e formatação dos chassis (6 dígitos numéricos)
-        df_p['Chassi'] = df_p['Chassi'].fillna('[ VAZIO ]').astype(str).str.strip()
-        df_p['Chassi'] = df_p['Chassi'].apply(lambda x: x.zfill(6) if x.isdigit() and len(x) < 6 else x)
+        df_p = pd.read_csv(url_patio_csv, dtype={'Chassi': str, 'Posicao': str})
+        
+        # Garante colunas essenciais
+        if 'Ala' not in df_p.columns or 'Posicao' not in df_p.columns or 'Chassi' not in df_p.columns:
+            st.error("A planilha precisa ter as colunas: Ala, Posicao, Chassi")
+            return pd.DataFrame()
+
+        # Normaliza nome da primeira Ala
+        df_p['Ala'] = df_p['Ala'].astype(str).str.strip()
+        df_p['Ala'] = df_p['Ala'].apply(lambda x: "Ala A (Muro)" if x.upper() in ["ALA A", "ALA A (MURO)", "A"] else x)
+
+        # Formatação infalível de Chassis (garante zeros à esquerda)
+        df_p['Chassi'] = df_p['Chassi'].apply(formatar_chassi)
         
         # Tratamento de Modelo e Cor
-        if 'Modelo' in df_p.columns:
-            df_p['Modelo'] = df_p['Modelo'].fillna('-').astype(str).str.strip()
-        else:
-            df_p['Modelo'] = '-'
+        df_p['Modelo'] = df_p['Modelo'].fillna('-').astype(str).str.strip() if 'Modelo' in df_p.columns else '-'
+        df_p['Cor'] = df_p['Cor'].fillna('-').astype(str).str.strip() if 'Cor' in df_p.columns else '-'
             
-        if 'Cor' in df_p.columns:
-            df_p['Cor'] = df_p['Cor'].fillna('-').astype(str).str.strip()
-        else:
-            df_p['Cor'] = '-'
-            
+        # Converte Posição para inteiro
+        df_p['Posicao'] = pd.to_numeric(df_p['Posicao'], errors='coerce').fillna(0).astype(int)
+        
         return df_p
     except Exception as e:
-        st.error(f"Erro ao ler a aba 'Patio'. Verifique se as colunas estão corretas. Detalhes: {e}")
+        st.error(f"Erro ao ler a aba 'Patio'. Verifique a estrutura da planilha. Detalhes: {e}")
         return pd.DataFrame()
 
 df_lido = carregar_dados()
@@ -82,7 +97,7 @@ if not df_lido.empty and set(['Ala', 'Posicao', 'Chassi']).issubset(df_lido.colu
     for _, row in df_lido.iterrows():
         mask = (df_patio['Ala'] == str(row['Ala']).strip()) & (df_patio['Posicao'] == int(row['Posicao']))
         chassi_val = str(row['Chassi']).strip()
-        if chassi_val != "" and chassi_val != "nan":
+        if chassi_val != "" and chassi_val != "[ VAZIO ]":
             df_patio.loc[mask, 'Chassi'] = chassi_val
             df_patio.loc[mask, 'Modelo'] = row.get('Modelo', '-')
             df_patio.loc[mask, 'Cor'] = row.get('Cor', '-')
@@ -92,16 +107,14 @@ st.subheader("🔍 Localizar Carros para Embarque")
 entrada_texto = st.text_area(
     "Digite os Chassis (6 dígitos numéricos, um por linha):", 
     height=120, 
-    placeholder="Ex:\n123456\n654321\n098765"
+    placeholder="Ex:\n012345\n654321\n098765"
 )
 
 if st.button("🔎 Localizar Veículos", type="primary"):
     lista_busca = []
     for c in entrada_texto.split('\n'):
-        item = c.strip()
-        if item:
-            if item.isdigit() and len(item) < 6:
-                item = item.zfill(6)
+        item = formatar_chassi(c)
+        if item and item != '[ VAZIO ]':
             lista_busca.append(item)
     
     if lista_busca:
@@ -125,10 +138,9 @@ if 'encontrados_busca' in st.session_state and not st.session_state['encontrados
     encontrados = st.session_state['encontrados_busca']
     st.success(f"**{len(encontrados)} veículo(s) localizado(s) no pátio!**")
     
-    # Exibe a tabela com Modelo e Cor inclusos
     st.dataframe(encontrados[['Chassi', 'Modelo', 'Cor', 'Ala', 'Posicao']], use_container_width=True)
     
-    # Modal / Pop-up de Confirmação para Retirada
+    # Pop-up de Confirmação para Retirada
     @st.dialog("⚠️ Confirmar Retirada do Pátio")
     def popup_confirmacao():
         st.write("Retire os veículos abaixo das vagas para envio às lojas:")
@@ -153,7 +165,7 @@ if 'nao_encontrados_busca' in st.session_state and st.session_state['nao_encontr
 
 st.divider()
 
-# 4. Visualização em Colunas (Grade do Pátio com Scroll)
+# 4. Visualização em Colunas (Grade do Pátio)
 st.subheader("📍 Visão Geral do Pátio (Alas A até E)")
 alas_unicas = sorted(df_patio['Ala'].unique())
 colunas_alas = st.columns(len(alas_unicas))
@@ -166,7 +178,7 @@ for idx, ala in enumerate(alas_unicas):
         with st.container(height=450):
             for _, row in dados_ala.iterrows():
                 chassi_val = str(row['Chassi']).strip()
-                esta_ocupado = chassi_val != "" and chassi_val != "[ VAZIO ]" and chassi_val != "nan"
+                esta_ocupado = chassi_val != "" and chassi_val != "[ VAZIO ]"
                 cor_indicador = "🔴" if esta_ocupado else "⚪"
                 
                 if esta_ocupado:
