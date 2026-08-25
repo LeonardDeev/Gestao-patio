@@ -49,9 +49,9 @@ def carregar_dados():
 
 df_lido = carregar_dados()
 
-# Montagem do Pátio Completo Base (Alas A, B, C, D, E | Vagas 1 a 40)
-alas = ["Ala A", "Ala B", "Ala C", "Ala D", "Ala E"]
-vagas_por_ala = 40
+# Montagem do Pátio Completo Base (Ala A (Muro), B, C, D, E | 60 Vagas por ala)
+alas = ["Ala A (Muro)", "Ala B", "Ala C", "Ala D", "Ala E"]
+vagas_por_ala = 60  # Atualizado para 60 vagas por ala (total de 300 vagas)
 
 estrutura_base = []
 for ala in alas:
